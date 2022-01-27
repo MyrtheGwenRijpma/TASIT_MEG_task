@@ -1,0 +1,372 @@
+
+"""
+Demo using the new (beta) MovieStim2 to play a video file. Path of video
+needs to updated to point to a video you have. MovieStim2 does /not/ require
+avbin to be installed.
+Movie2 does require:
+1. Python OpenCV package (so openCV libs and the cv2 python interface).
+    * For Windows, a binary installer is available at
+        http: //www.lfd.uci.edu/~gohlke/pythonlibs/  # opencv
+    * For Linux, it is available via whatever package manager you use.
+    * For OSX, ..... ?
+2. VLC application. The architeceture of this needs to match your psychopy/python installation 64/32 bit
+    whether or not your *operating system* is 64/32 bit
+    http: //www.videolan.org/vlc/index.html
+    "In scanner TASIT SI-E task"
+"""
+
+
+from __future__ import division
+from psychopy import visual, core, data, event, logging, parallel
+import time, os, serial
+win = visual.Window([800, 800],fullscr=True, color=[-1,-1,-1]) 
+
+#parallel port address = 0x0378
+usb2ttl8 = "/dev/cu.usbmodem87551801"
+sconn = serial.Serial(usb2ttl8, baudrate=128000, timeout=0.01)
+sconn.write(b"WRITE %d\n" % 0)
+
+# HELPER FUNCTIONS
+BIDS = 26
+logging.addLevel(BIDS, 'BIDS')
+
+def move_halted_log(fn):
+    # flush log
+    logging.flush()
+    shutil.move(fn, fn.replace('.txt', '__halted.txt'))
+    # quit
+    win.close()
+    core.quit()
+
+def logbids(msg, t=None, obj=None):
+    """logbids(message)
+    logs a BIDS related message
+    """
+    logging.root.log(msg, level=BIDS, t=t, obj=obj)
+    
+logging.console.setLevel(logging.INFO)  # receive nearly all messages
+time_template = '%Y%m%dT%H%M%S'
+LOGDIR = 'logs'
+os.makedirs(LOGDIR, exist_ok=True)
+log_fn =  f"{LOGDIR}/{time.strftime(time_template)}.txt"
+
+log_responses = logging.LogFile(log_fn, level=logging.INFO)
+
+event.globalKeys.add(key='q',
+                 modifiers=['ctrl'],
+                 func=move_halted_log,
+                 func_args=[log_fn],
+                 name='quit experiment gracefully')
+#logbids("onset\tduration\tstim_type\trepetition")
+
+# duration will be filled later
+template_bids = '{onset:.3f}\t{duration:.3f}\t{stim_type}\t{stim_fn}\t' \
+                '{repetition}'
+
+#create movie stimuli 2
+clips2 = [
+#    r'./Stimuli/TASIT_SIM_1A_low.mp4',
+#    r'./Stimuli/TASIT_SIM_4A_low.mp4',
+#    r'./Stimuli/TASIT_SIM_7A_low.mp4',
+#    r'./Stimuli/TASIT_SIM_11A_low.mp4',
+#    r'./Stimuli/TASIT_SIM_14A_low.mp4',
+    r'./Stimuli/TASIT_SIM_1B_low.mp4',
+    r'./Stimuli/TASIT_SIM_4B_low.mp4',
+    r'./Stimuli/TASIT_SIM_7B_low.mp4',
+    r'./Stimuli/TASIT_SIM_11B_low.mp4',
+    r'./Stimuli/TASIT_SIM_14B_low.mp4',
+]
+
+movie_stimuli2 = []
+
+for clip2 in clips2:
+    mov2 = visual.MovieStim2(win, clip2,
+    size=800,
+    # pos specifies the /center/ of the movie stim location
+    pos=[0, 0],
+    name=clip2,
+    flipVert=False, flipHoriz=False,
+    loop=False)
+
+    movie_stimuli2.append(mov2)
+    
+for mov2, clip2 in zip(movie_stimuli2, clips2):
+    d = visual.TextStim(win, " + ", pos=(0,50), height=50, wrapWidth=800, units= 'pix')
+    d.draw()
+    win.flip()
+    time.sleep(1) # event.waitKeys(maxWait=1, keyList=[])
+    sconn.write(b"WRITE %d\n" % 10)
+    logbids(f"start of video clip {clip2}")
+    shouldflip = mov2.play()
+    pressed_key = []
+    while mov2.status != visual.FINISHED:
+        # Only flip when a new frame should be displayed. Can significantly reduce
+        # CPU usage. This only makes sense if the movie is the only /dynamic/ stim
+        # displayed.
+        if shouldflip:
+            # Movie has already been drawn, so just draw text stim and flip
+            win.flip()
+        else:
+            # Give the OS a break if a flip is not needed
+            time.sleep(0.001)
+        pressed_key = event.getKeys()
+        if pressed_key:
+            logbids("participant pressed key " + pressed_key[0])
+        # Drawn movie stim again. Updating of movie stim frames as necessary
+        # is handled internally.
+        shouldflip = mov2.draw()
+    win.flip()
+    sconn.write(b"WRITE %d\n" % 0)
+    logbids(f"end of video clip {clip2}")
+    logging.flush()
+
+# instruction text stimuli:
+instruction = [
+    "For this task, you will be viewing videos that show interactions between people. \n\n" 
+    "While watching the video, press a button every time you hear someone say something that you don't believe is true. \n"
+    "Additionally, at the end of each video, you will be asked four questions about the people in the video that you just viewed. \n\n"
+    "You will answer each question with a YES or a NO. \n"
+    "To answer YES, press the left button. \n"
+    "To answer NO, press the right button. \n\n"
+    "Select YES or NO to continue.",
+]
+
+#display instruction text with selecting option
+for instr in instruction:
+    logbids("start instruction")
+    ins = visual.TextStim(win, instr, pos=(0,100), height=35, wrapWidth=800, units='pix')
+    answer_yes = visual.TextStim(win, 'YES', pos=(-150, -250), height=80, units='pix')
+    answer_no = visual.TextStim(win, 'NO', pos=(150, -250), height=80, units='pix')
+    ins.draw()
+    answer_yes.draw()
+    answer_no.draw()
+    win.flip()
+    pressed_keys = event.waitKeys()[0]
+    print(f'pressed {pressed_keys}')
+    response = pressed_keys
+    if pressed_keys == '1':
+        answer_yes.color = [1,0.34,-1]
+        logbids("for instruction: participant pressed yes")
+    elif pressed_keys =='2':
+        answer_no.color = [1,0.34,-1]
+        logbids("for instruction: participant pressed no")
+        logbids("end instruction")
+    ins.draw()
+    answer_yes.draw()
+    answer_no.draw()
+    win.flip()
+    response = pressed_keys
+    core.wait(0.75)
+logging.flush()
+
+instruction1 = [
+    "As you may noticed, the answer you selected turned yellow.\n\n"
+    "To confirm your answer, you have to press the same button again. \n\n"
+    "If you change your mind after selecting your answer, you can still switch by pressing the other button.\n\n\n"
+    "Give it a try!",
+    "Let's try it again.",
+    "We will now begin with the test. Only the first video is a practice video.\n\n"
+    "Remember, press left twice for YES and press right twice for NO.",
+]
+
+#display instruction text with confimration option
+for instr1 in instruction1:
+    logbids("start of instruction1")
+    ins1 = visual.TextStim(win, instr1, pos=(0, 100), height=35, wrapWidth=800, units='pix')
+    answer_yes = visual.TextStim(win, 'YES', pos=(-150, -250), height=80, units='pix')
+    answer_no = visual.TextStim(win, 'NO', pos=(150, -250), height=80, units='pix')
+    ins1.draw()
+    answer_yes.draw()
+    answer_no.draw()
+    win.flip()
+    pressed_keys = event.waitKeys()[0]
+    response_1 = pressed_keys
+    if pressed_keys == 'r':
+        answer_yes.color = [1,0.34,-1]
+        logbids("instruction1.1: participant pressed yes")
+    elif pressed_keys == 'g':
+        answer_no.color = [1,0.34,-1]
+        logbids("instruction1.1: participant pressed no")
+    ins1.draw()
+    answer_yes.draw()
+    answer_no.draw()
+    win.flip()
+    pressed_keys = event.waitKeys()[0]
+    while pressed_keys != response_1:
+        if pressed_keys == 'r':
+            answer_yes.color = [1,0.34,-1]
+            answer_no.color = [1,1,1]
+            logbids("instruction1.2: participant pressed yes")
+        elif pressed_keys == 'g':
+            answer_no.color = [1,0.34,-1]
+            answer_yes.color = [1,1,1]
+            logbids("instruction1.2: participant pressed no")
+            logbids("end of instruction1")
+        ins1.draw()
+        answer_yes.draw()
+        answer_no.draw()
+        win.flip()
+        response_1 = pressed_keys
+        pressed_keys = event.waitKeys()[0]
+logging.flush()
+
+#create movie stimuli
+clips = [
+    r'./Stimuli/TASIT_practice_low.mp4',
+    r'./Stimuli/TASIT_SIE_1A_low.mp4',
+    r'./Stimuli/TASIT_SIE_2A_low.mp4',
+    r'./Stimuli/TASIT_SIE_3A_low.mp4',
+    r'./Stimuli/TASIT_SIE_4A_low.mp4',
+    r'./Stimuli/TASIT_SIE_5A_low.mp4',
+    r'./Stimuli/TASIT_SIE_6A_low.mp4',
+    r'./Stimuli/TASIT_SIE_7A_low.mp4',
+    r'./Stimuli/TASIT_SIE_8A_low.mp4',
+    r'./Stimuli/TASIT_SIE_9A_low.mp4',
+    r'./Stimuli/TASIT_SIE_10A_low.mp4',
+    r'./Stimuli/TASIT_SIE_11A_low.mp4',
+    r'./Stimuli/TASIT_SIE_12A_low.mp4',
+    r'./Stimuli/TASIT_SIE_13A_low.mp4',
+    r'./Stimuli/TASIT_SIE_14A_low.mp4',
+    r'./Stimuli/TASIT_SIE_15A_low.mp4',
+    r'./Stimuli/TASIT_SIE_16A_low.mp4',
+    r'./Stimuli/TASIT_SIE_1B_low.mp4',
+    r'./Stimuli/TASIT_SIE_2B_low.mp4',
+    r'./Stimuli/TASIT_SIE_3B_low.mp4',
+    r'./Stimuli/TASIT_SIE_4B_low.mp4',
+    r'./Stimuli/TASIT_SIE_5B_low.mp4',
+    r'./Stimuli/TASIT_SIE_6B_low.mp4',
+    r'./Stimuli/TASIT_SIE_7B_low.mp4',
+    r'./Stimuli/TASIT_SIE_8B_low.mp4',
+    r'./Stimuli/TASIT_SIE_9B_low.mp4',
+    r'./Stimuli/TASIT_SIE_10B_low.mp4',
+    r'./Stimuli/TASIT_SIE_11B_low.mp4',
+    r'./Stimuli/TASIT_SIE_12B_low.mp4',
+    r'./Stimuli/TASIT_SIE_13B_low.mp4',
+    r'./Stimuli/TASIT_SIE_14B_low.mp4',
+    r'./Stimuli/TASIT_SIE_15B_low.mp4',
+    r'./Stimuli/TASIT_SIE_16B_low.mp4',
+]
+
+movie_stimuli = []
+
+#create question stimuli
+questions = [
+    ["Is Ruth trying to pressure Gary into helping her?", "Is she trying to say it's OK if he doesn't help her?", "Does she think he should stop what he is doing and help her?", "Is she annoyed with him?"],
+    ["Is Ruth trying to make Frank worry less about smashing the car?", "Is she trying to say it is not as bad as it seems?", "Does she believe the boss will understand?", "Is she showing concern for Frank?"],
+    ["Is Gary hiding the fact that Rosie scribbled in his book?", "Is he trying to say Rosie needs another lesson in how to treat books?", "Does Ruth know that Rosie scribbled in the book?", "Is Gary openly annoyed about the scribbles in the book?"],
+    ["Is Jane predending she's happy with Billie?", "Is she trying to say she'd worry about lending her CDs to Billie again?", "does she believe Billie returned her CDs in good order?", "Is she openly annoyed with Billie?"],
+    ["Is Tanya genuinely tring to make Kath feel better about her party?", "Is she trying to say it wasn't Kath's fault?", "Does Tanya think the party was a success?", "Is Tanya openly sympathetic and caring towards Kath?"],
+    ["Is Michael seriously tring to make Tanya believe he wants to go out?", "Is he trying to say he's disappointed about staying home?", "Does she think he'd rather stay home?", "Is he pleased about staying home?"],
+    ["Is Kristy tring to hide the fact that there's hardly any tea left?", "Is she trying to say she'd like some more?", "Does she think there's plenty of tea left?", "Is she openly annoyed with him?"],
+    ["Is tanya trying to hide the fact that Cal didn't eat all his dinner?", "Is she trying to say Cal obeyed Michael?", "Does Michael think Cal has eaten all his dinner?", "Is Tanya openly annoyed?"],
+    ["Is Michael trying to make Olivia feel OK about asking for $20?", "Is she trying to say he's got plenty of money for lunch?", "Does he believe he's got enough money for lunch?", "Is she openly sympathetic?"],
+    ["Is Ruth teasing Keith about how the outfit looks?", "Is she trying to say it isn't so bad?", "Does she think it looks awful?", "Is she openly sympathetic?"],
+    ["Is she trying to make him believe he hasn't put on weight?", "Is she trying to say he has put on weight?", "Does she think he's put on weight?", "Does he seem happy with her?"],
+    ["Is Jane trying to reassure Annie that she likes her new boyfriend?", "Is she trying to say she thinks Annie's boyfriend is great?", "Does Annie believe Jane likes her new boyfriend?", "Does Jane dislike Annie's new boyfriend?"],
+    ["Is Michael trying to make Olivia believe he'll pack the hot-water bottle?", "Is he trying to say it's a silly idea to take the hot-water bottle?", "Does he believe it's a good idea to take the hot-water bottle?", "Is he openly playing with her?"],
+    ["Is Rowan trying to make tanya believe he's happy to help her?", "Is he trying tot tell her his back hurts?", "Doe he think he should continue carrying boxes?", "Is he showing concern for Tanya's feelings?"],
+    ["Is Keith covering up how little money there is in the jar?", "Is he trying to say there's plenty of money in the jar?", "Does Olivia think he's teasing her?", "Is he openly concerned for her feelings?"],
+    ["Is Michael tyring to make Keith believe he's completed the crossword?", "Is he trying to say he found it easy?", "By the end of the scene, does Keith think Michael did well on the crossword?", "Is Michael openly annoyed at Keith?"],
+    ["Is Gary joking with Ruth about having enough to eat?", "Is he trying to say he's still hungry?", "Does she think he's joking with her?", "Is he openly showing concern for her feelings?"],
+    ["Is Gary hiding the fact that Rosie scribbled in his book?", "Is he trying to say Rosie needs another lesson in how to treat books?", "Does Ruth know that Rosie scribbled in the book?", "Is Gary openly annoyed about the scribbles in the book?"],
+    ["Is Rowan trying to make tanya believe he's happy to help her?", "Is he trying tot tell her his back hurts?", "Doe he think he should continue carrying boxes?", "Is he showing concern for Tanya's feelings?"],
+    ["Is she trying to make him believe he hasn't put on weight?", "Is she trying to say he has put on weight?", "Does she think he's put on weight?", "Does he seem happy with her?"],
+    ["Is Jane predending she's happy with Billie?", "Is she trying to say she'd worry about lending her CDs to Billie again?", "does she believe Billie returned her CDs in good order?", "Is she openly annoyed with Billie?"],
+    ["Is Gary joking with Ruth about having enough to eat?", "Is he trying to say he's still hungry?", "Does she think he's joking with her?", "Is he openly showing concern for her feelings?"],
+    ["Is Michael trying to make Olivia believe he'll pack the hot-water bottle?", "Is he trying to say it's a silly idea to take the hot-water bottle?", "Does he believe it's a good idea to take the hot-water bottle?", "Is he openly playing with her?"],
+    ["Is Ruth trying to make Frank worry less about smashing the car?", "Is she trying to say it is not as bad as it seems?", "Does she believe the boss will understand?", "Is she showing concern for Frank?"],
+    ["Is Keith covering up how little money there is in the jar?", "Is he trying to say there's plenty of money in the jar?", "Does Olivia think he's teasing her?", "Is he openly concerned for her feelings?"],
+    ["Is Michael tyring to make Keith believe he's completed the crossword?", "Is he trying to say he found it easy?", "By the end of the scene, does Keith think Michael did well on the crossword?", "Is Michael openly annoyed at Keith?"],
+    ["Is Tanya genuinely tring to make Kath feel better about her party?", "Is she trying to say it wasn't Kath's fault?", "Does Tanya think the party was a success?", "Is Tanya openly sympathetic and caring towards Kath?"],
+    ["Is Kristy tring to hide the fact that there's hardly any tea left?", "Is she trying to say she'd like some more?", "Does she think there's plenty of tea left?", "Is she openly annoyed with him?"],
+    ["Is tanya trying to hide the fact that Cal didn't eat all his dinner?", "Is she trying to say Cal obeyed Michael?", "Does Michael think Cal has eaten all his dinner?", "Is Tanya openly annoyed?"],
+    ["Is Michael seriously tring to make Tanya believe he wants to go out?", "Is he trying to say he's disappointed about staying home?", "Does she think he'd rather stay home?", "Is he pleased about staying home?"],
+    ["Is Ruth teasing Keith about how the outfit looks?", "Is she trying to say it isn't so bad?", "Does she think it looks awful?", "Is she openly sympathetic?"],
+    ["Is Jane trying to reassure Annie that she likes her new boyfriend?", "Is she trying to say she thinks Annie's boyfriend is great?", "Does Annie believe Jane likes her new boyfriend?", "Does Jane dislike Annie's new boyfriend?"],
+    ["Is Michael trying to make Olivia feel OK about asking for $20?", "Is she trying to say he's got plenty of money for lunch?", "Does he believe he's got enough money for lunch?", "Is she openly sympathetic?"],
+]
+
+for clip in clips:
+    mov = visual.MovieStim2(win, clip,
+    size=800,
+    # pos specifies the /center/ of the movie stim location
+    pos=[0, 0],
+    name=clip,
+    flipVert=False, flipHoriz=False,
+    loop=False)
+
+    movie_stimuli.append(mov)
+
+for mov, questions_clip, clip in zip(movie_stimuli, questions, clips):
+    d = visual.TextStim(win, " + ", pos=(0,50), height=50, wrapWidth=800, units= 'pix')
+    d.draw()
+    win.flip()
+    time.sleep(1) # event.waitKeys(maxWait=1, keyList=[])
+    sconn.write(b"WRITE %d\n" % 20)
+    logbids(f"start of video clip {clip}")
+    shouldflip = mov.play()
+    pressed_key = []
+    while mov.status != visual.FINISHED:
+        # Only flip when a new frame should be displayed. Can significantly reduce
+        # CPU usage. This only makes sense if the movie is the only /dynamic/ stim
+        # displayed.
+        if shouldflip:
+            # Movie has already been drawn, so just draw text stim and flip
+            win.flip()
+        else:
+            # Give the OS a break if a flip is not needed
+            time.sleep(0.001)
+        pressed_key = event.getKeys()
+        if pressed_key:
+            logbids("participant pressed key " + pressed_key[0])
+        # Drawn movie stim again. Updating of movie stim frames as necessary
+        # is handled internally.
+        shouldflip = mov.draw()
+    win.flip()
+    sconn.write(b"WRITE %d\n" % 0)
+    logbids(f"end of video clip {clip}")
+    logging.flush()
+
+    for question in questions_clip:
+        quest = visual.TextStim(win, question, pos=(0, 100), height=40, wrapWidth=1800, units='pix')
+        answer_yes = visual.TextStim(win, 'YES', pos=(-150, -250), height=80, units='pix')
+        answer_no = visual.TextStim(win, 'NO', pos=(150, -250), height=80, units='pix')
+        quest.draw()
+        answer_yes.draw()
+        answer_no.draw()
+        win.flip()
+        sconn.write(b"WRITE %d\n" % 5)
+        pressed_key = event.waitKeys()[0]
+        response_1 = pressed_key
+        if pressed_key == 'r':
+            answer_yes.color = [1,0.34,-1]
+            logbids(f"{question}: participant pressed yes")
+        elif pressed_key == 'g':
+            answer_no.color = [1,0.34,-1]
+            logbids(f"{question}: participant pressed no")
+        quest.draw()
+        answer_yes.draw()
+        answer_no.draw()
+        win.flip()
+        pressed_key = event.waitKeys()[0]
+        while pressed_key != response_1:
+            if pressed_key == 'r':
+                answer_yes.color = [1,0.34,-1]
+                answer_no.color = [1,1,1]
+                logbids(f"{question}: participant pressed yes")
+            elif pressed_key == 'g':
+                answer_no.color = [1,0.34,-1]
+                answer_yes.color = [1,1,1]
+                logbids(f"{question}: participant pressed no")
+            quest.draw()
+            answer_yes.draw()
+            answer_no.draw()
+            win.flip()
+            sconn.write(b"WRITE %d\n" % 0)
+
+            response_1 = pressed_key
+            pressed_key = event.waitKeys()[0]
+            logging.flush()
+
+win.close()
+core.quit()
